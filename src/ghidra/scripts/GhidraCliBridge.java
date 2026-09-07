@@ -1472,7 +1472,37 @@ public class GhidraCliBridge extends GhidraScript {
 
             int txId = currentProgram.startTransaction("Create function");
             try {
-                Function created = fm.createFunction(functionName, addr, null, SourceType.USER_DEFINED);
+                Function created = null;
+                try {
+                    created = fm.createFunction(functionName, addr, null, SourceType.USER_DEFINED);
+                } catch (Exception strictErr) {
+                    // Strict FunctionManager API rejects raw/flat-firmware gap entries
+                    // with "Function body must contain the entrypoint". Fall back to
+                    // the GUI-equivalent command below.
+                    created = null;
+                }
+
+                if (created == null) {
+                    // CreateFunctionCmd disassembles at the entry if needed and
+                    // computes the body by following flow, matching what the Ghidra
+                    // GUI's "Create Function" does. This is what lets computed/indirect
+                    // gap targets (common on flat firmware images) become real functions.
+                    ghidra.app.cmd.function.CreateFunctionCmd cmd =
+                        new ghidra.app.cmd.function.CreateFunctionCmd(addr);
+                    boolean applied = cmd.applyTo(currentProgram, monitor);
+                    if (applied) {
+                        created = fm.getFunctionAt(addr);
+                        if (created != null && requestedName != null && !requestedName.isEmpty()) {
+                            try {
+                                created.setName(functionName, SourceType.USER_DEFINED);
+                            } catch (Exception nameErr) {
+                                printerr("Function created but naming failed at " + addr
+                                    + ": " + nameErr.getMessage());
+                            }
+                        }
+                    }
+                }
+
                 if (created == null) {
                     currentProgram.endTransaction(txId, false);
                     return errorResult("Failed to create function at " + addr.toString());
