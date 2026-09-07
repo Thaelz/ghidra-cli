@@ -668,9 +668,71 @@ public class GhidraCliBridge extends GhidraScript {
                 return new HandleResult(errorResponse(result.get("error").getAsString()), false);
             }
 
+            // Persist mutations to the project database so they are visible
+            // when the program is later opened in the Ghidra GUI. Ending a
+            // transaction (endTransaction) only commits into the bridge JVM's
+            // in-memory program; only program.save() flushes to the .rep store.
+            // import/analyze/open_program already save on their own paths and
+            // are excluded here to avoid redundant writes.
+            if (isMutatingCommand(command) && currentProgram != null) {
+                try {
+                    currentProgram.save("ghidra-cli: " + command, monitor);
+                } catch (Exception saveErr) {
+                    printerr("Auto-save after " + command + " failed: " + saveErr.getMessage());
+                }
+            }
+
             return new HandleResult(successResponse(result), false);
         } catch (Exception e) {
             return new HandleResult(errorResponse(e.getMessage()), false);
+        }
+    }
+
+    /**
+     * Commands that mutate the program and must be flushed to the project's
+     * .rep database with program.save() so the changes survive bridge teardown
+     * and appear in the Ghidra GUI. Read-only queries (decompile, disasm,
+     * list_*, xrefs_*, find_*, get_*, graph_*, diff_*, exports) are omitted, as
+     * are import/analyze/open_program which persist on their own code paths.
+     */
+    private boolean isMutatingCommand(String command) {
+        if (command == null) return false;
+        switch (command) {
+            case "create_function":
+            case "rename_function":
+            case "delete_function":
+            case "symbol_create":
+            case "symbol_delete":
+            case "symbol_rename":
+            case "type_create":
+            case "type_apply":
+            case "type_delete":
+            case "type_rename":
+            case "type_create_enum":
+            case "type_typedef":
+            case "type_add_field":
+            case "type_del_field":
+            case "function_set_signature":
+            case "function_set_return_type":
+            case "function_set_calling_convention":
+            case "set_var_type":
+            case "comment_set":
+            case "comment_delete":
+            case "patch_bytes":
+            case "patch_nop":
+            case "script_run":
+            case "script_java":
+            case "script_python":
+            case "tag_create":
+            case "tag_delete":
+            case "tag_rename":
+            case "tag_set_comment":
+            case "tag_add":
+            case "tag_remove":
+            case "batch":
+                return true;
+            default:
+                return false;
         }
     }
 
